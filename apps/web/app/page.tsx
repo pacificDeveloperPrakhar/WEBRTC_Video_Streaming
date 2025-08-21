@@ -1,102 +1,133 @@
-import Image, { type ImageProps } from "next/image";
-import { Button } from "@repo/ui/button";
-import styles from "./page.module.css";
+"use client"
+import { useEffect, useRef, useState } from "react"
+import { io } from "socket.io-client"
+import ReactPlayer from "react-player"
+import Stream from "stream"
 
-type Props = Omit<ImageProps, "src"> & {
-  srcLight: string;
-  srcDark: string;
-};
+export default function Page() {
+  const [myid, setMyid] = useState("")
+  const socket = useRef(
+    io("http://localhost:8000/", {
+      reconnectionDelayMax: 10000,
+      auth: {
+        token: "123"
+      },
+      query: {
+        "my-key": "my-value"
+      }
+    })
+  )
+  // now ge the stream and to render it on the page
+  const [stream ,setStream]=useState<MediaStream|null>(null)
+  const peer = useRef<RTCPeerConnection | null>(null)
+  const [client,setClient] = useState("")
 
-const ThemeImage = (props: Props) => {
-  const { srcLight, srcDark, ...rest } = props;
+  useEffect(() => {
+    // create peer connection when component mounts
+    peer.current = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: ["stun:stun.l.google.com:19302"], // public Google STUN server
+        },
+      ],
+    })
+
+    function onConnect({ id }: { id: string }): void {
+      console.log("Connected with id:", id)
+      setMyid(id)
+    }
+    async function answer({id,offer}:{id:string,offer:RTCSessionDescriptionInit}){
+      console.log(offer)
+      
+      if(!peer.current)
+        return
+      peer.current.setRemoteDescription(new RTCSessionDescription(offer))
+      const answer=await peer.current.createAnswer()
+      await peer.current.setLocalDescription(answer)
+      socket.current.emit("accept",{id,answer})
+    }
+
+    async function receive_answer({id,answer}:{id:string,answer:RTCSessionDescriptionInit}){
+      if(!peer.current)
+        return
+      await peer.current.setRemoteDescription(new RTCSessionDescription(answer))
+    }
+    peer.current.onicecandidate = (event) => {
+      console.log("ice candidate")
+      if (event.candidate) {
+        socket.current.emit("ice-candidate", { id: client, candidate: event.candidate });
+      }
+    };
+    
+    async function send_ice({ candidate })  {
+      if(peer.current)
+
+      peer.current.addIceCandidate(new RTCIceCandidate(candidate));
+    }
+    // when you receive a remote ICE candidate
+    socket.current.on("ice-candidate", send_ice);
+    socket.current.on("signal",answer)
+    socket.current.on("accept",receive_answer)
+    socket.current.on("connected", onConnect)
+    peer.current.createDataChannel("chat")
+
+    return () => {
+      socket.current.off("connected", onConnect)
+      socket.current.off("signal",answer)
+      socket.current.off("accept",receive_answer)
+      socket.current.off("ice-candidate",send_ice)
+      socket.current.disconnect()
+      peer.current?.close()
+    }
+  }, [])
+  
+
+  // now the use effect to ge tht stream to render the page on the client
+  useEffect(()=>{
+   async function renderThemediaOnPage(){
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio:true,
+      video:true
+     })
+     setStream(stream)
+   }
+   renderThemediaOnPage()
+  },[])
+  async function signaling() {
+    if (!peer.current) return
+    const offer = await peer.current.createOffer()
+    await peer.current.setLocalDescription(offer)
+
+    socket.current.emit("signal", { id: client, offer })
+  }
+
 
   return (
-    <>
-      <Image {...rest} src={srcLight} className="imgLight" />
-      <Image {...rest} src={srcDark} className="imgDark" />
-    </>
-  );
-};
+    <div className="">
+      <h1>{myid}</h1>
+      <input
+        type="text"
+        value={client}
+        onChange={(e) => {
+          setClient(e.target.value)
+        }}
+      />
+      <button onClick={signaling}>connect</button>
 
-export default function Home() {
-  return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <ThemeImage
-          className={styles.logo}
-          srcLight="turborepo-dark.svg"
-          srcDark="turborepo-light.svg"
-          alt="Turborepo logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol>
-          <li>
-            Get started by editing <code>apps/web/app/page.tsx</code>
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+      {stream && (
+  <video
+    autoPlay
+    muted
+    playsInline
+    style={{ width: "400px", height: "300px", background: "black" }}
+    ref={(video) => {
+      if (video && stream) {
+        video.srcObject = stream
+      }
+    }}
+  />
+)}
 
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new/clone?demo-description=Learn+to+implement+a+monorepo+with+a+two+Next.js+sites+that+has+installed+three+local+packages.&demo-image=%2F%2Fimages.ctfassets.net%2Fe5382hct74si%2F4K8ZISWAzJ8X1504ca0zmC%2F0b21a1c6246add355e55816278ef54bc%2FBasic.png&demo-title=Monorepo+with+Turborepo&demo-url=https%3A%2F%2Fexamples-basic-web.vercel.sh%2F&from=templates&project-name=Monorepo+with+Turborepo&repository-name=monorepo-turborepo&repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fturborepo%2Ftree%2Fmain%2Fexamples%2Fbasic&root-directory=apps%2Fdocs&skippable-integrations=1&teamSlug=vercel&utm_source=create-turbo"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            href="https://turborepo.com/docs?utm_source"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.secondary}
-          >
-            Read our docs
-          </a>
-        </div>
-        <Button appName="web" className={styles.secondary}>
-          Open alert
-        </Button>
-      </main>
-      <footer className={styles.footer}>
-        <a
-          href="https://vercel.com/templates?search=turborepo&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          href="https://turborepo.com?utm_source=create-turbo"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to turborepo.com →
-        </a>
-      </footer>
     </div>
-  );
+  )
 }
